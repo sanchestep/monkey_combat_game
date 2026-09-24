@@ -1,0 +1,851 @@
+# Monkey Kombat — architecture and technical task
+
+## Status
+Architect mode cannot write non-Markdown files directly, so the full approved specification is stored in [plans/tech_task.md](plans/tech_task.md). After approval, it should be copied verbatim into [tech_task.txt](tech_task.txt) in Code mode.
+
+## 1. Product summary
+Monkey Kombat is a session-based 2D pixel fighting game for Yandex Games. The player selects a monkey fighter, selects an arena, and fights a sequence of AI-controlled monkey opponents. The game loop is endless score-chasing with a best streak metric. One premium fighter, Monkey King, is locked behind Yandex Games in-app purchase. The game must support desktop keyboard controls and mobile touch controls, comply with Yandex Games SDK requirements, pause correctly during ads and tab blur, and preserve progress including best score and premium unlock state.
+
+## 2. Fixed implementation decisions
+### 2.1 Platforms
+- Desktop web in Yandex Games
+- Mobile web in Yandex Games
+- Landscape-first gameplay layout
+- On unsupported orientation for gameplay, show rotate-device overlay instead of broken layout
+
+### 2.2 Input methods
+Desktop:
+- Keyboard gameplay controls
+- Mouse and touch for menus
+
+Mobile:
+- Touch UI buttons for movement and attacks
+- Swipe up may duplicate jump action if convenient, but on-screen buttons are mandatory and primary
+- Menus fully operable by touch
+
+### 2.3 Monetization
+- Monkey King is unlocked only through Yandex Games SDK purchase flow
+- Unlock state must persist in saved progress
+- No external payments, no fake purchase UI, no purchase outside SDK
+
+### 2.4 Progress persistence
+Must persist at minimum:
+- Best streak
+- Whether Monkey King is purchased
+- Audio mute state
+- Optional last selected fighter and arena for UX convenience
+
+Persistence strategy:
+- Local save for guest mode
+- Cloud save through Yandex SDK when authorized and available
+- Guest mode must remain fully playable without authorization
+- Authorization prompt only after explicit user action if implemented
+
+## 3. Recommended technology stack
+Primary implementation recommendation:
+- Language: TypeScript
+- Rendering and game framework: Phaser 3
+- Build tool: Vite
+- Audio: Phaser sound manager with custom playlist controller
+- State management: lightweight scene state plus dedicated services
+- Persistence: custom save service wrapping localStorage and Yandex SDK player data
+- SDK integration: Yandex Games SDK wrapper service
+
+Reasoning:
+- TypeScript reduces ambiguity for combat, state, and SDK contracts
+- Phaser 3 is suitable for 2D sprite-based combat, scenes, input, collisions, tweens, audio, and responsive scaling
+- Vite gives fast iteration and simple web packaging
+
+Alternative acceptable stack only if implementation constraints require it:
+- JavaScript plus Phaser 3
+
+Preferred and required in this specification: TypeScript.
+
+## 4. Available assets
+### 4.1 Backgrounds and floor
+- Main menu and character selection background: [main_background.webp](main_background.webp)
+- Arena backgrounds from [arena/](arena/) sorted alphabetically by filename:
+  - [arena/jungle_forest_background.webp](arena/jungle_forest_background.webp)
+  - [arena/mountain_background.webp](arena/mountain_background.webp)
+  - [arena/river_background.webp](arena/river_background.webp)
+  - [arena/temple_background.webp](arena/temple_background.webp)
+- Floor sprite: [floor.png](floor.png)
+
+### 4.2 Fighters from [monkeys/](monkeys/) sorted alphabetically by filename
+- [monkeys/capuchin.png](monkeys/capuchin.png)
+- [monkeys/chimpanzee.png](monkeys/chimpanzee.png)
+- [monkeys/gorilla.png](monkeys/gorilla.png)
+- [monkeys/mandrill.png](monkeys/mandrill.png)
+- [monkeys/monkey_king.png](monkeys/monkey_king.png)
+- [monkeys/nose.png](monkeys/nose.png)
+- [monkeys/orange.png](monkeys/orange.png)
+- [monkeys/orangutan.png](monkeys/orangutan.png)
+- [monkeys/spider-monkey.png](monkeys/spider-monkey.png)
+
+### 4.3 Music from [music/](music/)
+- [music/first.mp3](music/first.mp3)
+- [music/second.mp3](music/second.mp3)
+
+Music playback rule:
+- During the whole game session, background music continuously plays random tracks from the music folder
+- When one track ends, another random track starts automatically
+- Avoid immediate repetition if more than one track exists
+- Music obeys mute state and pause and resume lifecycle
+
+## 5. Core game loop
+### 5.1 Flow
+- Boot and loading
+- Main screen
+- Character selection
+- Arena selection
+- Fight
+- Round result modal
+- Ad display after round-end action
+- Next fight or restart
+
+### 5.2 Endless streak structure
+- Player chooses one fighter for the current run
+- Player chooses one arena before the first fight of the run
+- Opponents are selected one by one from remaining fighters
+- Streak increments after each victory
+- Best streak updates immediately when current streak exceeds saved best streak
+- If player loses, run ends and restart returns to character selection screen
+
+## 6. Screen specification
+### 6.1 Boot and preload screen
+Responsibilities:
+- Load essential assets
+- Initialize Yandex SDK safely
+- Initialize save service
+- Restore mute state, best streak, purchase state
+- Prepare ads and purchases wrappers
+- Call LoadingAPI.ready when user can start interacting with the game
+
+Requirements:
+- No hanging loader
+- Graceful fallback if SDK methods unavailable in local dev
+- No console-breaking errors in absence of production SDK
+
+### 6.2 Main screen
+Background:
+- Use [main_background.webp](main_background.webp)
+
+Elements:
+- Game title: Monkey Kombat in pixel style
+- Start button with pixel text: Начать
+- Music toggle button in top-left corner
+
+Behavior:
+- Clicking Start opens character selection
+- Music toggle exists on every screen in same top-left position
+- Toggle visually reflects current mute state
+- Main screen must be touch-friendly and keyboard and mouse friendly
+
+### 6.3 Character selection screen
+Background:
+- Use [main_background.webp](main_background.webp)
+
+Layout:
+- Grid of fighter cards sorted alphabetically by filename-derived display name
+- Each monkey shown inside a square card with visually clipped or beveled corners to imitate twisted or cut corners
+- Under each card show pixel-font fighter name derived from filename
+- Left side panel shows selected fighter preview and stats
+- Bottom area shows Далее button only after valid selection
+
+Selection behavior:
+- On click or tap of a fighter card, its border becomes red
+- Selected fighter preview appears on the left
+- Stats shown: Сила, Скорость, Дальние атаки
+- Stats can be normalized values such as 1 to 5 bars or percentages, but must be deterministic and documented in config
+
+Monkey King rules:
+- Monkey King card is visible in the roster
+- If not purchased, card must clearly show locked state and purchase CTA
+- Clicking locked Monkey King opens purchase confirmation flow through Yandex SDK purchase service
+- If purchase succeeds, unlock state updates immediately and persists
+- If purchase fails, is cancelled, or SDK unavailable, fighter remains locked and UI shows non-blocking feedback
+- If Monkey King becomes unlocked during selection, it becomes selectable without screen reload
+
+Display name normalization rules:
+- capuchin -> Capuchin
+- chimpanzee -> Chimpanzee
+- gorilla -> Gorilla
+- mandrill -> Mandrill
+- monkey_king -> Monkey King
+- nose -> Nose
+- orange -> Orange
+- orangutan -> Orangutan
+- spider-monkey -> Spider Monkey
+
+Localized visible labels in Russian are allowed, but internal IDs must remain filename-based.
+
+### 6.4 Arena selection screen
+Layout:
+- Arena cards sorted alphabetically by filename
+- Each card is a rectangle with arena preview image
+- Under each card show pixel-font arena name derived from filename
+- Selected arena border becomes red
+- Start button appears only after arena selected
+
+Behavior:
+- Clicking Start begins gameplay scene
+
+Arena display names derived from filenames:
+- jungle_forest_background -> Jungle Forest
+- mountain_background -> Mountain
+- river_background -> River
+- temple_background -> Temple
+
+Russian localized labels may be added, but internal IDs remain filename-based.
+
+### 6.5 Gameplay screen
+Visual composition:
+- Selected arena background fills scene without distortion
+- Floor from [floor.png](floor.png) placed at bottom for every arena
+- Both fighters stand strictly on floor baseline
+- Player fighter on left side facing right
+- Enemy fighter on right side facing left
+
+HUD:
+- Top-left: player health bar
+- Top-right: enemy health bar
+- Max HP for both = 100
+- Top-center: current streak of consecutive wins
+- Persistent music toggle in top-left area without overlapping health bar; if overlap risk exists, place toggle slightly below or inset while preserving consistent corner placement across screens
+
+Controls desktop:
+- W = jump
+- A = move left
+- S = crouch
+- D = move right
+- Enter = punch
+- Shift = kick
+- Space = throw banana
+
+Controls mobile:
+- Left-side touch controls for movement: left, right, crouch, jump
+- Right-side touch controls for attacks: punch, kick, banana
+- Buttons large enough for thumbs and non-overlapping with gameplay-critical HUD
+- Optional swipe up for jump may supplement but not replace jump button
+
+Combat rules:
+- Punch deals X damage with cooldown X_t
+- Kick deals Y damage with cooldown Y_t
+- Banana deals Z damage with cooldown Z_t
+
+Implementation requirement:
+- X, Y, Z, X_t, Y_t, Z_t must be defined in a central balance config file, not hardcoded across logic
+- Recommended initial medium-complexity balance for first implementation:
+  - Punch: 8 damage, 0.55 sec cooldown, short range
+  - Kick: 12 damage, 0.95 sec cooldown, medium range
+  - Banana: 10 damage, 1.8 sec cooldown, projectile, long range
+- Final values must remain configurable
+
+Hit rules:
+- Attack only deals damage if hit conditions are met
+- Punch and kick require target within attack range and valid vertical overlap
+- Banana is a projectile moving horizontally toward opponent and disappears on hit or leaving arena bounds
+- During crouch, hitbox height changes
+- Jump changes vertical position and hitbox
+- Health cannot go below 0
+- No simultaneous double KO unless explicitly implemented; preferred rule: first lethal hit processed ends round immediately
+
+Movement rules:
+- Fighters cannot leave arena bounds
+- Fighters cannot sink below floor
+- Fighters cannot overlap unnaturally; maintain minimum separation or simple pushback
+- Player cannot move through enemy and enemy cannot move through player
+- Jump arc must return fighter exactly to floor baseline
+- Crouch should reduce movement or disable horizontal movement while crouched, choose one rule and keep consistent
+
+Round end rules:
+- If player HP reaches 0 first, show defeat modal
+- If enemy HP reaches 0 first, show victory modal
+- Freeze gameplay during modal
+- Pause combat timers and inputs during modal and ads
+
+### 6.6 Defeat modal
+Shown when player HP becomes 0
+
+Content:
+- Title: Вы проиграли
+- Center text: Лучший счёт: {best streak}
+- Bottom button: Начать заново
+
+Behavior:
+- Clicking button triggers ad display
+- After ad closes or fails, flow returns to character selection screen
+- Current run resets completely
+
+### 6.7 Victory modal
+Shown when enemy HP becomes 0 and enemy is not Monkey King special-final case
+
+Content:
+- Title: Победа
+- Buttons:
+  - Продолжить
+  - Заново
+
+Behavior:
+- Clicking either button triggers ad display
+- Продолжить starts next fight in same run against another valid opponent
+- Заново resets run and returns to character selection screen
+
+### 6.8 Monkey King special victory modal
+Shown when defeated enemy is Monkey King
+
+Content:
+- Title and text: Король повержен, абсолютная победа!
+- Buttons:
+  - Продолжить серию!
+  - Начать заново
+
+Behavior:
+- Clicking either button triggers ad display
+- Продолжить серию! continues same run with a new random opponent excluding Monkey King permanently for the rest of that run
+- Начать заново resets run and returns to character selection screen
+
+## 7. Opponent selection logic
+### 7.1 Initial enemy selection
+- Enemy is random from remaining fighters excluding player-selected fighter
+- Monkey King exclusion rule:
+  - If Monkey King is in remaining pool and there are other available fighters, do not choose Monkey King yet
+  - Exact implementation rule:
+    1. Build remaining pool = all fighters except player-selected fighter
+    2. If pool contains any non-Monkey-King fighters, choose randomly only among non-Monkey-King fighters
+    3. Choose Monkey King only when no other remaining fighters are available
+- This rule applies regardless of whether player purchased Monkey King; purchase only affects player selection availability, not enemy eligibility
+
+### 7.2 Continuing series after victories
+- Maintain a run-specific set of already defeated opponents
+- Next opponent is chosen from fighters not yet defeated in current run and not equal to player-selected fighter
+- Apply Monkey King exclusion preference until he is the only remaining valid opponent
+- After Monkey King is defeated and player chooses Продолжить серию!, start selecting random opponents again from non-player fighters excluding Monkey King permanently for the rest of that run
+- If all non-player, non-Monkey-King opponents are exhausted after Monkey King defeat, recycle previously defeated non-Monkey-King opponents to continue endless mode
+- If Monkey King was never reached because player restarted earlier, normal pool logic remains unchanged
+
+## 8. AI requirements, medium difficulty
+AI must feel active but fair.
+
+Behavior model recommendation:
+- Finite state machine with weighted decisions
+
+States:
+- Idle
+- Approach
+- Retreat
+- AttackPunch
+- AttackKick
+- AttackBanana
+- Jump
+- Crouch or evade pause
+
+Decision principles:
+- AI evaluates distance to player at fixed intervals, for example every 150 to 300 ms with slight randomness
+- At long range, prefers approach or banana
+- At medium range, mixes kick, approach, retreat
+- At short range, prefers punch or kick
+- Occasionally jumps or crouches to avoid predictability
+- Respects same cooldowns as player
+- Does not input-perfectly react every frame
+- Includes reaction delay and random variance
+- Avoids spamming banana continuously
+- Avoids corner-locking player forever
+
+Recommended fairness constraints:
+- Reaction delay 200 to 450 ms
+- Random mistake chance 10 to 20 percent
+- Short post-attack vulnerability window
+- If player is airborne, AI reduces punch frequency and may reposition
+- If AI is too close to arena edge, it may jump or retreat less often to avoid jitter
+
+## 9. Fighter data model
+Each fighter must be defined in config, not scattered in code.
+
+Required fields:
+- id
+- assetKey
+- displayName
+- sortName
+- purchasable boolean
+- purchaseProductId or null
+- stats:
+  - strength
+  - speed
+  - ranged
+- gameplay modifiers:
+  - moveSpeedMultiplier
+  - jumpMultiplier
+  - punchDamageMultiplier
+  - kickDamageMultiplier
+  - bananaDamageMultiplier
+
+Optional:
+- previewScale
+- combatScale
+- portraitOffset
+- hitbox config
+
+Important:
+- Since only one static image per monkey is currently available, implementation must use sprite-like movement with transforms, tween feedback, squash and stretch-lite, flashes, shake, and projectile effects rather than frame-by-frame animation sheets
+- If future animation sheets are added, architecture must allow replacing static fighter renderer with animated sprites without rewriting combat systems
+
+## 10. Arena data model
+Each arena config entry must include:
+- id
+- assetKey
+- displayName
+- sortName
+- floorOffsetY if needed
+- previewCrop or previewScale if needed
+
+## 11. Audio system
+Requirements:
+- Random background music from [music/](music/) plays continuously across menus and gameplay
+- When current track ends, next random track starts automatically
+- Avoid immediate repeat if more than one track exists
+- Music toggle button exists on every screen in top-left
+- Mute state persists in save data
+- Audio pauses on:
+  - tab blur if required by browser and Yandex rules
+  - ad start
+  - SDK pause event
+- Audio resumes on:
+  - return from ad if not muted
+  - SDK resume event if not muted
+- No browser native media player UI should appear
+
+Implementation recommendation:
+- Central AudioService singleton or global scene plugin
+- Playlist queue generated from loaded tracks
+- Track-end listener chooses next track
+- Separate SFX channel optional for hits, UI clicks, victory, defeat
+
+## 12. Ads requirements
+Ads must be shown only through Yandex Games SDK and only in logical pauses.
+
+Exact required moments from product request:
+- After each round, after clicking one of these buttons:
+  - Начать заново
+  - Продолжить
+  - Заново
+  - Продолжить серию!
+
+Rules:
+- Do not show ad before user action on modal
+- Pause gameplay and audio during ad
+- Preserve full game state before ad
+- After ad success, close, skip, or failure, continue intended flow safely
+- No custom fake fullscreen ad screens
+
+Recommended implementation:
+- Interstitial ad wrapper with promise-based API
+- Modal button handler sequence:
+  1. Disable modal buttons to prevent double click
+  2. Save progress if needed
+  3. Pause scene and audio
+  4. Request interstitial
+  5. On callback, resume controlled flow to next scene or state
+
+## 13. In-app purchase requirements
+Monkey King unlock purchase must use Yandex Games SDK purchases.
+
+Requirements:
+- Product ID stored in config constant
+- Character card shows locked state and purchase CTA if not owned
+- Purchase flow only starts after explicit user tap or click
+- On successful purchase:
+  - consume or non-consumable handling must match actual product type
+  - unlock Monkey King permanently for player profile
+  - save unlock state immediately
+  - refresh selection UI immediately
+- On failed purchase or cancellation:
+  - no unlock
+  - no broken state
+- On startup:
+  - restore purchases or entitlements from SDK profile data or saved state according to chosen SDK integration pattern
+
+Important Yandex requirement note:
+- If in-app purchases are used, implementation must follow SDK purchase and save requirements, including persistence across devices for authorized users
+- If consumable method is required by chosen product setup, implement according to SDK docs; for a permanent fighter unlock, prefer non-consumable semantics if supported by actual Yandex setup, otherwise document exact purchase restoration logic
+
+## 14. Save system requirements
+### 14.1 Data to save
+Required:
+- bestStreak: number
+- isMusicMuted: boolean
+- unlockedFighters: string array or ownership map including monkey_king when purchased
+
+Optional but recommended:
+- lastSelectedFighterId
+- lastSelectedArenaId
+- language
+
+### 14.2 Save timing
+Save immediately when:
+- best streak changes
+- purchase succeeds
+- mute state changes
+- player confirms restart or continue if run metadata needs persistence
+
+### 14.3 Storage layers
+- Local storage for guest mode fallback
+- Cloud or player data through Yandex SDK when available and allowed
+
+Conflict resolution recommendation:
+- Prefer cloud data for authorized users if valid
+- Merge with local by taking max bestStreak and union of unlocked fighters if needed
+- Never lose Monkey King ownership due to stale local data
+
+## 15. Localization requirements
+Minimum:
+- Russian UI fully implemented
+
+Recommended architecture:
+- Localization dictionary system with keys
+- Auto-detect language through Yandex SDK
+- Fallback to Russian if unsupported locale
+
+At minimum localize:
+- Buttons
+- Modal texts
+- Labels
+- Control hints
+- Purchase texts
+- Rotate-device overlay
+- Loading texts
+
+## 16. Responsive and UX requirements
+### 16.1 General
+- No browser scrollbars during gameplay
+- No text overlap
+- No stretched or distorted art
+- Maintain aspect ratio of active playfield
+- Landscape-first layout with safe-area handling
+- Touch targets large enough for mobile thumbs
+- Prevent context menu and text selection on game canvas
+
+### 16.2 Desktop
+- Keyboard is primary gameplay input
+- Mouse usable for menus
+- Avoid OS-reserved hotkey conflicts beyond requested controls
+
+Note:
+- Shift alone can be problematic in some input systems. Implementation must verify reliable detection of Shift as kick. If unreliable on target browsers or framework, fallback mapping must be documented and exposed in settings or help, but primary requested mapping remains Shift.
+
+### 16.3 Mobile
+- Full gameplay must be possible without keyboard
+- On-screen controls must not cover health bars or critical combat readability
+- Multi-touch must support movement plus attack combinations
+- Buttons must visually show pressed state
+- If orientation becomes portrait, show rotate overlay and pause gameplay
+
+## 17. Scene and module architecture
+Recommended project structure:
+- [src/main.ts](src/main.ts)
+- [src/game/config/gameConfig.ts](src/game/config/gameConfig.ts)
+- [src/game/config/fighters.ts](src/game/config/fighters.ts)
+- [src/game/config/arenas.ts](src/game/config/arenas.ts)
+- [src/game/config/balance.ts](src/game/config/balance.ts)
+- [src/game/scenes/BootScene.ts](src/game/scenes/BootScene.ts)
+- [src/game/scenes/MainMenuScene.ts](src/game/scenes/MainMenuScene.ts)
+- [src/game/scenes/CharacterSelectScene.ts](src/game/scenes/CharacterSelectScene.ts)
+- [src/game/scenes/ArenaSelectScene.ts](src/game/scenes/ArenaSelectScene.ts)
+- [src/game/scenes/FightScene.ts](src/game/scenes/FightScene.ts)
+- [src/game/scenes/UIScene.ts](src/game/scenes/UIScene.ts)
+- [src/game/scenes/OverlayScene.ts](src/game/scenes/OverlayScene.ts)
+- [src/game/entities/Fighter.ts](src/game/entities/Fighter.ts)
+- [src/game/entities/BananaProjectile.ts](src/game/entities/BananaProjectile.ts)
+- [src/game/ai/EnemyAIController.ts](src/game/ai/EnemyAIController.ts)
+- [src/game/services/AudioService.ts](src/game/services/AudioService.ts)
+- [src/game/services/SaveService.ts](src/game/services/SaveService.ts)
+- [src/game/services/YandexSdkService.ts](src/game/services/YandexSdkService.ts)
+- [src/game/services/AdsService.ts](src/game/services/AdsService.ts)
+- [src/game/services/PurchaseService.ts](src/game/services/PurchaseService.ts)
+- [src/game/services/InputService.ts](src/game/services/InputService.ts)
+- [src/game/services/LocalizationService.ts](src/game/services/LocalizationService.ts)
+- [src/game/ui/components/Button.ts](src/game/ui/components/Button.ts)
+- [src/game/ui/components/ToggleButton.ts](src/game/ui/components/ToggleButton.ts)
+- [src/game/ui/components/HealthBar.ts](src/game/ui/components/HealthBar.ts)
+- [src/game/ui/components/FighterCard.ts](src/game/ui/components/FighterCard.ts)
+- [src/game/ui/components/ArenaCard.ts](src/game/ui/components/ArenaCard.ts)
+- [src/game/ui/components/Modal.ts](src/game/ui/components/Modal.ts)
+- [src/game/utils/nameFormat.ts](src/game/utils/nameFormat.ts)
+- [src/game/utils/random.ts](src/game/utils/random.ts)
+
+Responsibilities:
+- BootScene: preload, SDK init, save restore
+- MainMenuScene: title and start
+- CharacterSelectScene: fighter roster, purchase entry point
+- ArenaSelectScene: arena roster
+- FightScene: combat simulation
+- UIScene or OverlayScene: HUD, modals, persistent top-left music toggle if architecturally cleaner
+- Services isolate SDK, ads, purchases, saves, audio
+
+## 18. State model
+Global persistent state:
+- sdkReady
+- playerAuthState
+- bestStreak
+- unlockedFighters
+- isMusicMuted
+- locale
+
+Run state:
+- selectedFighterId
+- selectedArenaId
+- currentStreak
+- defeatedOpponentIds
+- monkeyKingDefeatedInRun boolean
+- currentEnemyId
+
+Fight state:
+- playerHp
+- enemyHp
+- playerCooldowns
+- enemyCooldowns
+- projectile list
+- paused reason enum: none, modal, ad, blur, sdkPause, orientation
+
+## 19. Combat system details
+### 19.1 Fighter representation
+Because assets are static images, each fighter should have:
+- sprite or image object
+- body or hitbox rectangle
+- hurtbox rectangle
+- attack origin points
+- floor anchor point
+
+Feedback effects:
+- small recoil on hit
+- tint flash on damage
+- subtle scale or tween on attacks
+- screen shake on stronger hits optional
+
+### 19.2 Attack resolution order
+Recommended per frame or update tick:
+- Process inputs and AI intents
+- Update movement and jump physics
+- Spawn attacks and projectiles if cooldown ready
+- Resolve collisions and hits
+- Apply damage and knockback
+- Clamp positions and HP
+- Check round end
+
+### 19.3 Banana projectile
+- Spawn from attacker toward opponent facing direction
+- Travel at configurable speed
+- One projectile per attack action unless future balance changes
+- Destroy on hit, out-of-bounds, or round end
+- Projectile should not damage owner
+
+## 20. UI and UX details
+### 20.1 Character and arena cards
+- Sorted alphabetically by filename-derived IDs
+- Selected border red
+- Locked Monkey King visually distinct with lock icon or text
+- Cards must remain readable on small mobile widths; allow responsive wrapping and scaling
+
+### 20.2 Stats presentation
+Stats shown on character selection left panel:
+- Сила
+- Скорость
+- Дальние атаки
+
+Represent as bars or stars.
+Must be derived from fighter config, not manually duplicated in UI.
+
+### 20.3 Control hinting
+Game must include visible control instructions somewhere accessible:
+- Either on gameplay HUD first launch overlay
+- Or on main menu or help panel
+
+This is important for Yandex Games moderation.
+
+Desktop controls text:
+- WASD movement
+- Enter punch
+- Shift kick
+- Space banana
+
+Mobile controls text:
+- On-screen buttons for movement and attacks
+
+## 21. Edge cases and corner cases
+### 21.1 Asset and loading
+- Missing asset should fail gracefully in dev with clear console error, not silent crash
+- If music folder has one track only, replay same track without anti-repeat logic issue
+- If no music can load, game remains playable without crash
+
+### 21.2 Selection flow
+- Далее button hidden until fighter selected
+- Start button hidden until arena selected
+- Locked Monkey King cannot be selected without successful purchase
+- If purchase popup closes unexpectedly, selection screen remains stable
+- If selected fighter becomes invalid due to corrupted save, reset selection
+
+### 21.3 Opponent logic
+- Enemy must never equal player-selected fighter
+- Enemy selection must respect Monkey King exclusion preference
+- If only Monkey King remains, he must be selected
+- After Monkey King special victory and continue, Monkey King must never appear again in that run
+- If opponent pool becomes empty in endless continuation, recycle allowed opponents according to rules
+
+### 21.4 Combat
+- HP never below 0 or above 100 unless future buffs added
+- Inputs ignored during modal, ad, pause, or orientation overlay
+- Cooldowns do not continue incorrectly while game paused unless intentionally using real-time timers; preferred: freeze cooldown progression during pause
+- Banana projectile removed on round end to avoid post-round damage
+- No duplicate round-end modal from multiple lethal events in same frame
+- Jumping and crouching should not break floor alignment after repeated actions
+- Rapid key repeat or multi-touch spam must not bypass cooldowns
+
+### 21.5 Ads and pause lifecycle
+- If ad fails to load, intended post-button flow still continues
+- If tab loses focus during fight, gameplay and audio pause
+- On resume, game continues safely without time-step explosion
+- If ad opens while projectile exists, state resumes consistently or next scene loads cleanly
+
+### 21.6 Save integrity
+- Corrupted local save should reset to defaults safely
+- Cloud save unavailable should not block gameplay
+- Purchase ownership must not be lost if cloud sync temporarily fails
+- Best streak must update immediately after victory if exceeded, not only on defeat
+
+### 21.7 Input conflicts
+- Enter, Shift, Space, WASD must not trigger browser scrolling or unwanted page actions while canvas focused
+- Space especially must prevent page scroll
+- Multi-touch should allow holding move and pressing attack simultaneously
+
+## 22. Yandex Games compliance requirements
+Based on [требования.pdf](требования.pdf), implementation must explicitly satisfy these points:
+- Integrate Yandex Games SDK correctly
+- No external auth required; guest mode supported
+- If auth exists, only after explicit user action
+- Sound pauses on tab minimize or blur and during ads
+- Ads only through SDK
+- Purchases only through SDK
+- Mobile gameplay fully touch-operable
+- No browser or system media player UI
+- No context menu or text selection from long tap or right click on game field
+- Save progress immediately after meaningful changes
+- Responsive layout without distortion or clipping
+- No technical errors, hangs, or broken flows on resize, blur, ad open, orientation change
+- Call LoadingAPI.ready when game is ready for interaction
+- Use auto language detection through SDK
+- Keep total unpacked build under 100 MB
+- Root archive must contain index.html
+- No Russian letters or spaces in final file and folder names for shipped build
+
+Important implementation note:
+Current workspace contains [требования.pdf](требования.pdf) and asset names already include a Russian filename for the PDF only. Final shipped game files must still follow Yandex naming restrictions.
+
+## 23. Non-functional requirements
+- Stable 60 FPS target on typical desktop and acceptable performance on mid-range mobile browsers
+- No memory leaks from scene restarts
+- No duplicated audio instances across scene transitions
+- Deterministic config-driven gameplay values
+- Clean separation between game logic and SDK wrappers
+- Easy future extension for more fighters, arenas, SFX, and animations
+
+## 24. Testing checklist for code assistant
+### 24.1 Functional
+- Main menu loads with background and Start button
+- Music toggle visible on every screen
+- Character cards sorted correctly
+- Monkey King locked before purchase
+- Purchase unlock updates UI and persists after reload
+- Arena cards sorted correctly
+- Fight starts with selected fighter and valid enemy
+- Enemy never duplicates player fighter
+- Monkey King appears only when only remaining option
+- Health bars update correctly
+- Punch, kick, banana all work with cooldowns
+- AI moves and attacks with medium difficulty
+- Defeat modal shows best streak
+- Victory modal buttons work
+- Monkey King special victory modal works
+- Ads trigger after modal button clicks and flow resumes correctly
+- Best streak persists after reload
+- Mute state persists after reload
+
+### 24.2 Responsive and platform
+- Desktop keyboard controls work in Chrome, Yandex Browser, Firefox, Safari if possible
+- Mobile touch controls work on Android and iOS browsers supported by Yandex Games
+- Orientation change to portrait pauses and shows rotate overlay
+- Returning to landscape resumes safely
+- No browser scroll or context menu on gameplay area
+
+### 24.3 Failure handling
+- Ad failure does not block progression
+- Purchase cancellation does not break selection screen
+- Missing or corrupt save resets safely
+- Blur and resume does not accelerate timers unexpectedly
+
+## 25. Implementation priority order for code assistant
+1. Project bootstrap with TypeScript, Phaser, and Vite
+2. Asset preload and responsive scaling foundation
+3. Yandex SDK wrapper with safe dev fallback
+4. Save service and persistent settings
+5. Audio service with random looping playlist and mute toggle
+6. Main menu scene
+7. Character selection scene with locked Monkey King purchase flow stub or integration
+8. Arena selection scene
+9. Core fight scene with floor, fighters, HUD, movement, attacks, cooldowns
+10. Enemy AI medium difficulty
+11. Round-end modals and streak progression
+12. Ads integration after modal actions
+13. Cloud save and purchase restoration polish
+14. Localization and control hints
+15. QA pass for edge cases and Yandex compliance
+
+## 26. Acceptance criteria
+The implementation is accepted only if all of the following are true:
+- Game loop from main menu to repeated fights works without dead ends
+- Desktop and mobile controls are both playable
+- Music plays randomly and continuously, can be muted, and respects pause lifecycle
+- Monkey King is purchasable only through Yandex SDK and remains unlocked after save restore
+- Enemy selection follows exact exclusion rules including Monkey King special handling
+- Ads appear only after round-end action buttons and do not corrupt state
+- Best streak is tracked and persisted correctly
+- UI remains readable and usable across desktop and mobile landscape layouts
+- Core Yandex Games technical requirements from [требования.pdf](требования.pdf) are reflected in implementation
+
+## 27. Notes for the code assistant
+- Do not invent extra gameplay systems such as combos, blocking, fatalities, energy bars, or multiplayer unless explicitly requested later
+- Keep visuals pixel-art friendly and avoid smoothing where inappropriate
+- Use config-driven constants for all balance and fighter stats
+- Prefer robust simple combat over overengineered animation systems because current assets are static images
+- Build architecture so future art upgrades can replace static images with sprite sheets
+- Keep all user-facing Russian texts grammatically correct
+- Recheck every requested rule from the original order before implementation
+
+## 28. Original request cross-check summary
+Confirmed and included:
+- Title Monkey Kombat
+- Main background on first and second screens
+- Start button
+- Music toggle top-left on every screen
+- Random looping music from folder
+- Character grid with alphabetical sorting and names from filenames
+- Red border on selected fighter
+- Left preview with stats and Далее button
+- Monkey King behind in-app purchase
+- Arena selection with alphabetical sorting and red border
+- Start button after arena selection
+- Floor on every arena
+- Player left, enemy right, both on floor
+- Health bars and streak HUD
+- WASD, Enter, Shift, Space controls
+- AI medium difficulty
+- Defeat and victory modals
+- Best score on defeat
+- Ads after round-end action buttons
+- Monkey King special victory flow
+- Yandex requirements from [требования.pdf](требования.pdf)
+
+Additional clarifications fixed in this specification:
+- Desktop plus mobile web target
+- Touch controls required
+- TypeScript plus Phaser 3 recommended as implementation stack
+- Save architecture, SDK wrappers, edge cases, and compliance details defined
