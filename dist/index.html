@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>Monkey Kombat</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 0;
+        background-color: #000;
+        overflow: hidden;
+        touch-action: none;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      #game-container {
+        width: 100vw;
+        height: 100vh;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+      }
+      canvas {
+        display: block;
+      }
+      #boot-loader {
+        position: fixed;
+        inset: 0;
+        background: radial-gradient(ellipse at center, #2a1810 0%, #0a0503 100%);
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        z-index: 9999;
+        font-family: 'Trebuchet MS', sans-serif;
+        color: #ffd27f;
+        transition: opacity 0.4s ease-out;
+      }
+      #boot-loader.hidden {
+        opacity: 0;
+        pointer-events: none;
+      }
+      #boot-loader .title {
+        font-size: clamp(28px, 6vw, 56px);
+        font-weight: 900;
+        letter-spacing: 2px;
+        text-shadow: 0 0 12px rgba(255, 140, 0, 0.6), 0 4px 8px rgba(0, 0, 0, 0.8);
+        margin-bottom: 30px;
+        text-transform: uppercase;
+      }
+      #boot-loader .spinner {
+        width: 60px;
+        height: 60px;
+        border: 6px solid rgba(255, 210, 127, 0.2);
+        border-top-color: #ffb347;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+        margin-bottom: 24px;
+      }
+      #boot-loader .label {
+        font-size: clamp(14px, 2.4vw, 18px);
+        opacity: 0.85;
+        letter-spacing: 1px;
+      }
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+    </style>
+    <!-- Yandex Games SDK -->
+    <script src="https://yandex.ru/games/sdk/v2"></script>
+    <script>
+      // Disable right-click context menu
+      document.addEventListener('contextmenu', function(e) {
+        e.preventDefault();
+      });
+      
+      // Disable text selection and dragging
+      document.addEventListener('selectstart', function(e) {
+        e.preventDefault();
+      });
+      
+      document.addEventListener('dragstart', function(e) {
+        e.preventDefault();
+      });
+      
+      // More comprehensive touch handling to prevent context menus
+      let touchStartTime;
+      document.addEventListener('touchstart', function(e) {
+        touchStartTime = Date.now();
+        // Prevent multi-touch gestures
+        if (e.touches.length > 1) {
+          e.preventDefault();
+        }
+      }, { passive: false });
+      
+      document.addEventListener('touchend', function(e) {
+        const touchDuration = Date.now() - touchStartTime;
+        // Prevent long press context menu (usually triggers after ~500ms)
+        if (touchDuration > 400) {
+          e.preventDefault();
+        }
+      }, { passive: false });
+      
+      // Prevent touch move for better control (but allow game to handle it)
+      document.addEventListener('touchmove', function(e) {
+        // Prevent default for non-game interactions
+        e.preventDefault();
+      }, { passive: false });
+    </script>
+    <script type="module" crossorigin src="./assets/index-CQU-6CCs.js"></script>
+  </head>
+  <body>
+    <div id="boot-loader">
+      <div class="title">Monkey Kombat</div>
+      <div class="spinner"></div>
+      <div class="label">Загрузка...</div>
+    </div>
+    <div id="game-container"></div>
+  </body>
+</html>
